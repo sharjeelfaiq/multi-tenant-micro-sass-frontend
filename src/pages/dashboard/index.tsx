@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Box, Button, TextField, Typography, Grid, Divider } from "@mui/material";
 import { KPICard } from "../../components";
 import { requestAPI, socket } from "../../utils";
@@ -13,64 +13,83 @@ export const Dashboard = () => {
         usersCount: 0,
         auditCount: 0,
     });
+    const [testData, setTestData] = useState(null);
 
-    useEffect(() => {
-        const controller = new AbortController();
-
-        const fetchKpis = async () => {
-            try {
-                const response = await requestAPI("GET", "kpis/get-by-tenant-id", undefined, {
-                    params: { tenant },
-                    signal: controller.signal,
-                });
-                const data = response.data.data;
-                setKpis({
-                    usersCount: data.usersCount,
-                    auditCount: data.auditCount,
-                });
-            } catch (err) {
-                if ((err as any).name === "CanceledError") return;
-                console.error(err);
-            }
-        };
-
-        fetchKpis();
-
-        return () => controller.abort();
-    }, [tenant]);
-
-    useEffect(() => {
-        const handleKpiUpdate = (data: any) => {
+    // Stable fetchKpis using useCallback
+    const fetchKpis = useCallback(async () => {
+        try {
+            const response = await requestAPI(
+                "GET",
+                "kpis/get-by-tenant-id",
+                undefined,
+                { params: { tenant } }
+            );
+            const data = response.data.data;
             setKpis({
                 usersCount: data.usersCount,
                 auditCount: data.auditCount,
             });
+        } catch (err) {
+            console.error(err);
+        }
+    }, [tenant]);
+
+    // Fetch tenant name
+    const fetchTenantName = useCallback(async () => {
+        try {
+            const response = await requestAPI("GET", `tenants/${tenant}`, undefined);
+            const data = response.data.data;
+            setName(data.subdomain);
+        } catch (err) {
+            console.error(err);
+        }
+    }, [tenant]);
+
+    // Initial fetch on mount
+    useEffect(() => {
+        fetchKpis();
+        fetchTenantName();
+    }, [fetchKpis, fetchTenantName]);
+
+    // Socket updates (only run once)
+    useEffect(() => {
+        const handleKpiUpdate = () => {
+            fetchKpis();
         };
 
-        socket.on("kpiUpdate", handleKpiUpdate);
+        socket.on("user_count_updated", handleKpiUpdate);
+        socket.on("audit_count_updated", handleKpiUpdate);
 
         return () => {
-            socket.off("kpiUpdate", handleKpiUpdate);
+            socket.off("user_count_updated", handleKpiUpdate);
+            socket.off("audit_count_updated", handleKpiUpdate);
         };
-    }, []);
+    }, [fetchKpis]);
 
+    // Refresh KPIs after testData changes
     useEffect(() => {
-        const getTenant = async () => {
-            try {
-                const response = await requestAPI("GET", `tenants/${tenant}`, undefined);
-                const data = response.data.data;
-                setName(data.subdomain);
-            } catch (err) {
-                console.error(err);
-            }
-        };
-
-        getTenant();
-    }, [tenant]);
+        if (testData) {
+            console.log("Test API returned:", testData);
+            fetchKpis();
+        }
+    }, [testData, fetchKpis]);
 
     const handleUpdateTenant = async () => {
         try {
             await requestAPI("PATCH", `tenants/${tenant}`, { subdomain: name });
+            await fetchKpis();      // refresh KPIs after tenant update
+            await fetchTenantName(); // refresh tenant name
+        } catch (err) {
+            console.error(err);
+        }
+    };
+
+    const handleTestUltravox = async () => {
+        try {
+            const response = await requestAPI("GET", "ultravox/test", undefined, {
+                params: { tenant },
+            });
+            setTestData(response.data);
         } catch (err) {
             console.error(err);
         }
@@ -109,12 +128,30 @@ export const Dashboard = () => {
                         onChange={(e) => setName(e.target.value)}
                         fullWidth
                     />
-                    <Button 
-                        variant="contained" 
+                    <Button
+                        variant="contained"
                         onClick={handleUpdateTenant}
                         sx={{ minWidth: 100 }}
                     >
                         Update
+                    </Button>
+                </Box>
+            </Box>
+
+            <Divider sx={{ my: 4 }} />
+
+            {/* Test Ultravox */}
+            <Box>
+                <Typography variant="h6" fontWeight={600} color="text.primary" mb={2}>
+                    Test Ultravox
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', maxWidth: 500 }}>
+                    <Button
+                        variant="outlined"
+                        onClick={handleTestUltravox}
+                        sx={{ minWidth: 100 }}
+                    >
+                        Test
                     </Button>
                 </Box>
             </Box>
